@@ -31,6 +31,12 @@ requirements/
 python scripts/extract_docx.py inputs/requirements/raw_docs/<文件名>.docx --list-sections
 ```
 
+不确定当前有哪些可用 Word 文档时，可以先查找：
+
+```bash
+python scripts/extract_docx.py --find-docs
+```
+
 需要查看章节原文时，可以直接提取指定章节：
 
 ```bash
@@ -50,7 +56,7 @@ python scripts/extract_docx.py inputs/requirements/raw_docs/<文件名>.docx --s
 读取需求文档时，重点提取：
 
 - 需求背景与功能入口
-- 涉及用户角色和站点范围
+- 涉及用户角色、权限范围和数据隔离范围
 - 菜单权限和按钮权限
 - 主流程、分支流程、状态流转规则
 - 字段校验规则、异常处理规则

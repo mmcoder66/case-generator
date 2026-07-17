@@ -36,7 +36,7 @@ UI 设计图、页面截图或原型图按章节名组织在 `inputs/ui_design/<
 
 不得仅凭 `inputs/ui_design/` 第一层文件结果或非递归搜索结果判断"无 UI 图"。若首次未命中目标章节目录，必须递归列出 `inputs/ui_design/` 下所有目录和图片文件，并按章节名、去掉编号后的章节名、核心关键词再次匹配。
 
-目录名与章节名一致或关键词命中时读取其中所有图片；有实际图片则读取，并在元信息 `输入文件` 中列出图片路径；不存在图片时再跳过并记录资料缺失或生成假设。
+目录名与章节名一致或关键词命中时读取其中所有图片；有实际图片则读取，并在元信息 `输入文件` 中列出图片路径；不存在图片时再跳过并记录资料缺失或生成假设。自动从 Word 提取章节图片时，只有检测到实际图片才允许创建 `inputs/ui_design/<章节名>/`；未检测到图片时不得创建空章节目录。
 
 读取图片前必须检查 `inputs/ui_design/` 下是否存在跨目录同名文件。存在同名文件时，不得直接读取原路径（CDN 上传按文件名存储会导致同名冲突），必须先将图片复制到临时目录并重命名为 `<目录名>_<文件名>` 格式，再读取临时目录文件。读取图片后如分析结果与当前章节明显不符，应怀疑同名冲突并排查。
 
@@ -68,34 +68,33 @@ UI 设计图、页面截图或原型图按章节名组织在 `inputs/ui_design/<
 
 ## 输出归属和文件处理
 
-站点分类、输出根目录和默认文件名均在本节维护，其他规则文件只引用本节。
+输出根目录和默认文件名均在本节维护，其他规则文件只引用本节。
 
-> 站点分类来自 `business_constants.SITE_TYPES`，默认骨架项目只有一个占位站点 `default_site`；新项目按业务实际修改 `SITE_TYPES`，本节同步替换。
+Markdown 和 Excel 交付物不再按项目分类创建子目录，统一按模块文件名直接保存到输出根目录：
 
-| 站点分类 | `<site_type>` | Markdown 输出根目录 | Excel 输出根目录 | 适用范围 |
-|---|---|---|---|---|
-| <TODO: 默认站点> | `default_site` | `outputs/origin_exports/default_site/` | `outputs/excel_exports/default_site/` | <TODO: 适用模块说明> |
-
-- 同一需求同时影响多个站点时，按主验证目标拆分或分别生成，避免不同站点菜单混写。
+| 文件类型 | 输出根目录 | 默认文件名 |
+|---|---|---|
+| Markdown 用例 | `outputs/origin_exports/` | `<module_name>_testcases.md` |
+| Excel 用例 | `outputs/excel_exports/` | `<module_name>_testcases.xlsx` |
 
 Markdown 输出路径固定为：
 
 ```text
-outputs/origin_exports/<site_type>/<module_name>_testcases.md
+outputs/origin_exports/<module_name>_testcases.md
 ```
 
 确定输出文件时：
 
 1. 先读取本次指定 PRD 章节。若 PRD 明确写出菜单入口、一级菜单、二级菜单或模块名称，以 PRD 原文作为业务归属第一依据。
-2. 按业务模块归属确定默认 `<site_type>/<module_name>`。
+2. 按业务模块归属确定默认 `<module_name>`。
 3. 需求已明确到具体子功能时，可在默认模块名后追加稳定英文子名，避免落到过宽的通用文件。
 4. 同一个输出文件内，分组字段和需求覆盖率对照表中的模块引用必须保持一致。
 
 | 需求类型 | 默认输出文件 |
 |---|---|
-| <TODO: 业务模块 1> | `<site_type>/<module_name_1>_testcases.md` |
-| <TODO: 业务模块 2> | `<site_type>/<module_name_2>_testcases.md` |
-| <TODO: 业务模块 3> | `<site_type>/<module_name_3>_testcases.md` |
+| <TODO: 业务模块 1> | `<module_name_1>_testcases.md` |
+| <TODO: 业务模块 2> | `<module_name_2>_testcases.md` |
+| <TODO: 业务模块 3> | `<module_name_3>_testcases.md` |
 
 命名要求：
 
@@ -106,10 +105,10 @@ outputs/origin_exports/<site_type>/<module_name>_testcases.md
 
 新需求不属于现有任何模块时：
 
-1. 按"输出文件定位"确定站点分类、中文分组和输出文件名。
+1. 按"输出文件定位"确定中文分组和输出文件名。
 2. 参考 `testcase_templates/common_templates/` 下的通用模板。
 3. 基于用户提供的资料、`knowledge_base/` 和通用覆盖维度生成用例。
-4. 保存到 `outputs/origin_exports/<site_type>/<new_module_name>_testcases.md`，其中 `site_type` 必须是 `business_constants.SITE_TYPES` 中声明的值之一。
+4. 保存到 `outputs/origin_exports/<new_module_name>_testcases.md`。
 
 ## 目标文件处理
 
@@ -142,7 +141,7 @@ outputs/origin_exports/<site_type>/<module_name>_testcases.md
 
 ## 生成与去重流程
 
-1. 判断新需求所属站点分类和功能模块，确认模块名和输出文件路径。
+1. 判断新需求所属功能模块，确认模块名和输出文件路径。
 2. 按 `testcase_templates/modules/menu_index.md` 读取参考用例。
 3. 按 `coverage_dimension_rules.md` 判断专项规则路由；命中时先读取对应专项规则，并把专项默认覆盖项作为生成前 checklist。
 4. 执行"需求审查清单"，先记录需求不明确、资料冲突、需求遗漏和规则不一致问题，再生成用例。
@@ -172,7 +171,7 @@ outputs/origin_exports/<site_type>/<module_name>_testcases.md
 
 - 优先级不同，例如核心路径与边界路径。
 - 预期结果有实质差异，例如错误提示、跳转目标、数据状态不同。
-- 前置条件涉及不同用户类型、站点权限、数据权限或业务数据状态。
+- 前置条件涉及不同用户类型、权限范围、数据权限或业务数据状态。
 - 边界方向不同，例如已有最小值边界，新场景是最大值边界。
 - 操作路径不同，且会影响验证目标或结果。
 
@@ -284,7 +283,7 @@ date "+%Y-%m-%d %H:%M:%S"
 生成或修改 Markdown 用例后必须执行：
 
 ```bash
-python scripts/validate_cases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md
+python scripts/validate_cases.py --source outputs/origin_exports/<module_name>_testcases.md
 ```
 
 - 存在 `ERROR` 时，不得导出 Excel。
@@ -303,7 +302,7 @@ python scripts/validate_cases.py --source outputs/origin_exports/<site_type>/<mo
 第一次生成（新建 / 覆盖 / 另存）时，推荐使用 `export_testcases.py --started-at` 一次完成单文件校验、Excel 导出和 `生成耗时` 回填：
 
 ```bash
-python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md --started-at
+python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --started-at
 ```
 
 `--started-at` 不带值时（推荐）自动从元信息块的"生成时间"行读取起点；元信息块的"生成时间"必须落盘为真实的开始读取资料时刻，不得瞎编。也可显式传入 Unix 秒级时间戳、`YYYY-MM-DD HH:MM` 或 `YYYY-MM-DD HH:MM:SS`。脚本会先完整校验用例（在 ERROR 时停止导出，`--strict` 下 WARN 也会停）；Excel 导出成功后回填实际耗时到 Markdown。回填只修改元信息中的"生成耗时"那一行，不触碰任何用例表格字段，因此不再二次校验。
@@ -311,13 +310,13 @@ python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<
 如需手动执行，校验通过后按单文件导出分需求 Excel：
 
 ```bash
-python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md
+python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md
 ```
 
 单文件导出生成：
 
 ```text
-outputs/excel_exports/<site_type>/<module_name>_testcases.xlsx
+outputs/excel_exports/<module_name>_testcases.xlsx
 ```
 
 不带 `--source` 或传入目录会生成 `测试用例导出_YYYYMMDD_HHMMSS.xlsx` 汇总文件，仅适合临时汇总，不作为默认交付方式。

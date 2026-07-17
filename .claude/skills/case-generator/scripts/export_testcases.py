@@ -9,12 +9,12 @@
     outputs/origin_exports/**/*_testcases.md
 
 默认输出：
-    outputs/excel_exports/<site_type>/测试用例导出_YYYYMMDD_HHMMSS.xlsx
+    outputs/excel_exports/测试用例导出_YYYYMMDD_HHMMSS.xlsx
 
 适用场景：
     - 将 Agent 生成在 outputs/origin_exports/ 的用例导出为 Excel。
     - 使用 --source 导出指定模块或指定目录的 Markdown 用例。
-    - 未指定 --output 时，按 business_constants.SITE_TYPES 分类输出。
+    - 未指定 --output 时，统一输出到 outputs/excel_exports/。
     - 导出前自动执行完整校验；存在 ERROR 时停止导出。
     - 使用 --strict 在存在 ERROR 或 WARN 时都停止导出。
     - 使用 --started-at 在单文件导出成功后回填 Markdown 中的"生成耗时"行；
@@ -27,10 +27,10 @@
 
 示例：
     python scripts/export_testcases.py
-    python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md
-    python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md --strict -o <module_name>_testcases.xlsx
-    python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md --started-at
-    python scripts/export_testcases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md --started-at "YYYY-MM-DD HH:MM:SS"
+    python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md
+    python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --strict -o <module_name>_testcases.xlsx
+    python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --started-at
+    python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --started-at "YYYY-MM-DD HH:MM:SS"
 
 本脚本只使用 Python 标准库，不需要额外安装依赖。
 
@@ -51,7 +51,6 @@ from business_constants import (
     COLUMN_WIDTH_BY_HEADER,
     CREATOR_NAME,
     SHEET_NAME,
-    SITE_TYPES,
 )
 from case_utils import (
     EXPECTED_HEADERS,
@@ -290,27 +289,6 @@ def default_output_path(output_dir: Path, source_file: Path | None = None) -> Pa
     return output_dir / f"测试用例导出_{timestamp}.xlsx"
 
 
-def site_type_for_case_file(case_file: Path, origin_dir: Path) -> str | None:
-    try:
-        relative = case_file.resolve().relative_to(origin_dir.resolve())
-    except ValueError:
-        return None
-
-    if relative.parts and relative.parts[0] in SITE_TYPES:
-        return relative.parts[0]
-    return None
-
-
-def group_case_files_by_site(
-    case_files: list[Path], origin_dir: Path
-) -> dict[str | None, list[Path]]:
-    groups: dict[str | None, list[Path]] = {}
-    for case_file in case_files:
-        site_type = site_type_for_case_file(case_file, origin_dir)
-        groups.setdefault(site_type, []).append(case_file)
-    return groups
-
-
 def parse_started_at(value: str) -> datetime | str:
     # argparse 对 nargs="?" 的 const 也会经过 type 转换，需放行 "auto" sentinel
     if value == "auto":
@@ -407,7 +385,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--output",
         help=(
             "输出文件名或路径，仅支持 --source 指向单个 Markdown 文件时使用；"
-            "相对路径会保存到 source 所属站点的 outputs/excel_exports/<site_type>/"
+            "相对路径会保存到 outputs/excel_exports/ 下"
         ),
     )
     parser.add_argument(
@@ -452,19 +430,13 @@ def clean_old_exports(output_dir: Path, keep: Path) -> list[Path]:
     return removed
 
 
-def build_output_path(
-    output_arg: str | None, output_dir: Path, site_type: str | None = None
-) -> Path:
+def build_output_path(output_arg: str | None, output_dir: Path) -> Path:
     if not output_arg:
         return default_output_path(output_dir)
 
     output_path = Path(output_arg)
     if not output_path.is_absolute():
-        if output_path.parts and output_path.parts[0] in SITE_TYPES:
-            output_path = output_dir / output_path
-        else:
-            site_output_dir = output_dir / site_type if site_type else output_dir
-            output_path = site_output_dir / output_path
+        output_path = output_dir / output_path
     if output_path.suffix.lower() != ".xlsx":
         output_path = output_path.with_suffix(".xlsx")
     return output_path
@@ -525,7 +497,6 @@ def main(argv: list[str]) -> int:
     elif args.started_at is not None:
         started_at_resolved = args.started_at
 
-    groups = group_case_files_by_site(case_files, origin_dir)
     if args.output:
         if len(case_files) != 1:
             print(
@@ -534,24 +505,20 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return 1
-        site_type = site_type_for_case_file(case_files[0], origin_dir)
         try:
             output_path = ensure_under(
-                build_output_path(args.output, output_dir, site_type),
+                build_output_path(args.output, output_dir),
                 output_dir,
                 "输出路径",
             )
         except ValueError as error:
             print(f"导出失败：{error}", file=sys.stderr)
             return 1
-        export_groups = [(site_type or "未分类", case_files, output_path)]
+        export_groups = [("当前文件", case_files, output_path)]
     else:
-        export_groups = []
-        for site_type, files in sorted(groups.items(), key=lambda item: item[0] or ""):
-            group_output_dir = output_dir / site_type if site_type else output_dir
-            # 单文件时用 MD 文件名，多文件合并时用时间戳
-            source_file = files[0] if len(files) == 1 else None
-            export_groups.append((site_type or "未分类", files, default_output_path(group_output_dir, source_file)))
+        # 单文件时用 MD 文件名，多文件合并时用时间戳。
+        source_file = case_files[0] if len(case_files) == 1 else None
+        export_groups = [("全部用例", case_files, default_output_path(output_dir, source_file))]
 
     exported_count = 0
     for group_name, group_files, output_path in export_groups:
@@ -614,7 +581,7 @@ def main(argv: list[str]) -> int:
             }
         )
         print("已导出测试用例 Excel：")
-        print(f"- 站点分类：{group_name}")
+        print(f"- 输出范围：{group_name}")
         print(f"- 文件路径：{output_path}")
         print(f"- 用例数量：{len(cases)}")
         print(f"- 覆盖模块：{', '.join(modules)}")

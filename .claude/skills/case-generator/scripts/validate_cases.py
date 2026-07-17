@@ -20,7 +20,7 @@
     - 字段是否完整
     - 优先级是否只使用 P0、P1、P2
     - 生成用例的备注是否写明来源
-    - 生成用例的追踪字段（CPV_SPECIFIC_HEADERS 声明的列）是否留空
+    - 生成用例的追踪字段（PROJECT_SPECIFIC_HEADERS 声明的列）是否留空
     - 测试场景是否重复
     - 操作步骤和预期结果是否过于空泛
     - 用例步骤和预期结果是否包含“按...规则”等抽象不可验证表达
@@ -34,7 +34,7 @@
 
 示例：
     python scripts/validate_cases.py
-    python scripts/validate_cases.py --source outputs/origin_exports/<site_type>/<module_name>_testcases.md
+    python scripts/validate_cases.py --source outputs/origin_exports/<module_name>_testcases.md
     python scripts/validate_cases.py --fix
     python scripts/validate_cases.py --json
     python scripts/validate_cases.py --source testcase_templates/modules
@@ -54,7 +54,7 @@ from datetime import datetime
 from pathlib import Path
 
 from business_constants import (
-    CPV_SPECIFIC_HEADERS,
+    PROJECT_SPECIFIC_HEADERS,
     CORE_FLOW_KEYWORDS,
     ENABLED_BUSINESS_RULES,
     MAX_GROUP_DEPTH,
@@ -163,7 +163,7 @@ INVALID_SOURCE_ATTRIBUTION_PATTERNS = [
         "UI 图来源备注必须写为“来源：UI图”，不得写为“来源：UI设计图”",
     ),
 ]
-EMPTY_GENERATED_HEADERS = CPV_SPECIFIC_HEADERS
+EMPTY_GENERATED_HEADERS = PROJECT_SPECIFIC_HEADERS
 
 # 生成耗时占位词：交付前必须按实际耗时回填
 DURATION_PLACEHOLDER_RE = re.compile(r"生成耗时：(?:待回填|约|预计)")

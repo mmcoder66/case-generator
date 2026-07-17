@@ -11,12 +11,12 @@
 - 若需求跨多个菜单，应读取所有命中的参考文件，用于去重和补充场景判断。
 - 找不到对应菜单参考文件时，不阻塞生成，应在元信息或回复中记录缺失参考资料和生成假设。
 
-| 站点分类 | 菜单路径 | 参考文件 |
+| 分类（可选） | 菜单路径 | 参考文件 |
 |---|---|---|
-| <TODO: 站点分类> | <TODO: 菜单路径> | <TODO: `<site_type>/<level1_menu>/<level2_menu>_template.md`> |
+| <TODO: 分类，可为空> | <TODO: 菜单路径> | <TODO: `[<category>/]<level1_menu>/<level2_menu>_template.md`> |
 
 ## 维护规则
 
-- 每个 `<site_type>/` 下只维护一级菜单目录。
+- 使用可选分类时，每个 `<category>/` 下只维护一级菜单目录；不需要分类时直接从一级菜单目录开始。
 - 一级菜单下的参考用例统一以 `_template.md` 作为公共后缀；二级菜单未拆分时使用 `<level2_menu>_template.md`，同一二级菜单下按需求或子功能拆分时使用 `<level2_menu>_<requirement_or_submodule>_template.md`。
 - 新增、移动或重命名参考用例文件时，必须同步更新本索引。

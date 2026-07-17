@@ -234,6 +234,32 @@ def render_blocks(blocks: list[DocBlock]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def section_has_images(docx_path: Path, section: str) -> bool:
+    """Return True when the section contains at least one extractable image."""
+    doc = Document(str(docx_path))
+    normalized_section = _normalized_heading(section)
+    section_started = False
+    section_level = 0
+
+    for paragraph in doc.paragraphs:
+        text = _paragraph_text(paragraph)
+        level = _heading_level(paragraph)
+
+        if not section_started:
+            if level and _normalized_heading(text) == normalized_section:
+                section_started = True
+                section_level = level
+            continue
+
+        if level and level <= section_level:
+            break
+
+        if _has_inline_image(paragraph) and _get_image_rel_ids(paragraph):
+            return True
+
+    return False
+
+
 def extract_section_images(
     docx_path: Path, section: str, output_dir: Path
 ) -> list[Path]:
@@ -281,11 +307,40 @@ def extract_section_images(
     return saved_paths
 
 
+def discover_docx_files(root: Path) -> tuple[list[Path], list[Path]]:
+    raw_docs = root / "inputs" / "requirements" / "raw_docs"
+    if not raw_docs.exists():
+        return [], []
+    docx_files = sorted(raw_docs.glob("*.docx"))
+    usable = [path for path in docx_files if not path.name.startswith("~$")]
+    lock_files = [path for path in docx_files if path.name.startswith("~$")]
+    return usable, lock_files
+
+
+def print_docx_candidates(root: Path) -> None:
+    usable, lock_files = discover_docx_files(root)
+    if usable:
+        print("可用 Word 文档：")
+        for path in usable:
+            print(f"  {path.relative_to(root)}")
+    else:
+        print("未找到可用 Word 文档。")
+
+    if lock_files:
+        print("\n已忽略 Word 临时锁文件：")
+        for path in lock_files:
+            print(f"  {path.relative_to(root)}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="从 Word (.docx) 直接列出章节或提取章节内容。"
     )
-    parser.add_argument("docx", help="源 Word 文件路径，例如 inputs/requirements/raw_docs/<文件名>.docx")
+    parser.add_argument(
+        "docx",
+        nargs="?",
+        help="源 Word 文件路径，例如 inputs/requirements/raw_docs/<文件名>.docx",
+    )
     action_group = parser.add_mutually_exclusive_group()
     action_group.add_argument(
         "--section",
@@ -296,6 +351,11 @@ def parse_args() -> argparse.Namespace:
         "--list-sections",
         action="store_true",
         help="列出文档中所有章节标题",
+    )
+    action_group.add_argument(
+        "--find-docs",
+        action="store_true",
+        help="列出 inputs/requirements/raw_docs/ 下可用的 .docx，并忽略 ~$ 临时锁文件",
     )
     parser.add_argument(
         "--print",
@@ -315,15 +375,30 @@ def resolve_docx_path(raw_path: str) -> Path:
     docx_path = ensure_under(build_source_path(raw_path, root), root, "Word 文件")
 
     if not docx_path.exists():
+        print_docx_candidates(root)
         raise FileNotFoundError(f"文件不存在：{docx_path}")
     if docx_path.suffix.lower() != ".docx":
         raise ValueError(f"仅支持 .docx 格式，收到：{docx_path.suffix}")
+    if docx_path.name.startswith("~$"):
+        print_docx_candidates(root)
+        raise ValueError(
+            f"收到 Word 临时锁文件：{docx_path.name}，请改用不以 ~$ 开头的正式 .docx"
+        )
     return docx_path
 
 
 def main() -> int:
     configure_output_encoding()
     args = parse_args()
+    root = project_root()
+
+    if args.find_docs:
+        print_docx_candidates(root)
+        return 0
+
+    if not args.docx:
+        print("错误：请提供 Word 文件路径，或使用 --find-docs 查找可用文档。", file=sys.stderr)
+        return 1
 
     try:
         docx_path = resolve_docx_path(args.docx)
@@ -361,8 +436,12 @@ def main() -> int:
         root = project_root()
         section_dir_name = args.section.strip()
         output_dir = root / "inputs" / "ui_design" / section_dir_name
-        output_dir.mkdir(parents=True, exist_ok=True)
 
+        if not section_has_images(docx_path, args.section):
+            print(f"章节「{args.section}」未检测到嵌入图片。")
+            return 0
+
+        output_dir.mkdir(parents=True, exist_ok=True)
         saved = extract_section_images(docx_path, args.section, output_dir)
         if not saved:
             existing = list(output_dir.glob("*"))

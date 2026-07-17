@@ -19,11 +19,11 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from business_constants import CPV_SPECIFIC_HEADERS
+from business_constants import PROJECT_SPECIFIC_HEADERS
 
 
 DEFAULT_GROUP_HEADERS = ["一级分组", "二级分组", "三级分组"]
-# 通用测试用例字段（9 项）+ 项目专属追踪字段（由 business_constants.CPV_SPECIFIC_HEADERS 提供）。
+# 通用测试用例字段（9 项）+ 项目专属追踪字段（由 business_constants.PROJECT_SPECIFIC_HEADERS 提供）。
 # 业务字段集中在 business_constants.py，换项目时改一处即可同步影响下游解析。
 _GENERIC_FIXED_HEADERS = [
     "用例名称",
@@ -36,7 +36,7 @@ _GENERIC_FIXED_HEADERS = [
     "备注",
     "用例标签",
 ]
-FIXED_CASE_HEADERS = _GENERIC_FIXED_HEADERS + CPV_SPECIFIC_HEADERS
+FIXED_CASE_HEADERS = _GENERIC_FIXED_HEADERS + PROJECT_SPECIFIC_HEADERS
 REQUIRED_FIXED_HEADERS = [
     "用例名称",
     "优先级",
