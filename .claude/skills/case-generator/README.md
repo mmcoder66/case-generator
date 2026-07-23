@@ -1,27 +1,33 @@
-# 测试用例生成器
+# QRS 测试用例生成器
 
 ## 项目是什么
 
-这是一个**基于 Claude Code 的 AI 测试用例生成工具**，以 Skill（技能插件）形式封装，服务于任意业务系统的功能测试工作。
+这是一个**基于 Claude Code 的 AI 测试用例生成工具**，以 Skill（技能插件）形式封装，专门服务于 **QRS（质量回顾系统，Quality Review System）** 的功能测试工作。
 
-核心价值：把需求文档、界面设计图等输入，自动转化为结构化、可执行、可导出的测试用例，代替测试人员手工编写用例的重复劳动，并通过规则和脚本保证用例质量。
+核心价值：把 QRS 的需求文档（PRD）、界面设计图等输入，自动转化为结构化、可执行、可导出的测试用例，代替测试人员手工编写用例的重复劳动，并通过规则和脚本保证用例质量。
 
-> 这是一个**通用骨架版本**：业务关键字、追踪字段和核心链路词表都通过 `scripts/business_constants.py` 配置；业务知识存放在 `knowledge_base/`；新项目接入时只需替换这两个位置的业务内容，框架代码无需修改。
+> 本项目已按 QRS PRD（`inputs/requirements/raw_docs/qrs-0720.docx`）完成接入：
+> - `scripts/business_constants.py` 已填入 QRS 追踪字段（关联模块、关联数据流、是否涉及 ALCOA+、是否涉及电子签名）、Excel 品牌、QRS 核心链路覆盖词表和业务校验开关。
+> - `knowledge_base/project_overview.md` 已填入 QRS 系统定位、价值主张、功能架构图、核心业务主线流程和数据流转关系。
+> - `generation_rules/difficulty_level_rules.md` 已填入 QRS 业务关键字。
+> - `testcase_templates/modules/menu_index.md` 已登记 QRS 17 个业务模块的菜单索引。
+>
+> QRS PRD 升级或菜单调整时，应同步更新上述配置；不需要修改框架代码。
 
 ## 项目结构
 
 ```
 case-generator/
-├── knowledge_base/       # 知识层：项目背景、业务术语、用户角色、各模块核心流程（新项目按实际填充）
+├── knowledge_base/       # 知识层：QRS 项目背景、业务术语、用户角色、各模块核心流程
 ├── generation_rules/     # 规则层：编写规范、输出路径、优先级、覆盖维度、补充规则
 ├── testcase_templates/   # 参考层：各模块高质量参考用例（只读）
 │   ├── common_templates/ # 通用格式模板（边界 / 兼容 / 异常）
-│   └── modules/          # 菜单参考用例
-│       ├── menu_index.md # 菜单路径到参考文件的索引
+│   └── modules/          # QRS 菜单参考用例
+│       ├── menu_index.md # 菜单路径到参考文件的索引（已登记 QRS 17 个模块）
 │       └── [<category>/]<level1_menu>/<level2_menu>_template.md
-├── inputs/               # 输入层：本次生成的素材
+├── inputs/               # 输入层：QRS 测试用例生成素材
 │   ├── requirements/     # 需求文档
-│   │   ├── raw_docs/     # 原始 Word 文档（.docx）
+│   │   ├── raw_docs/     # 原始 Word 文档（.docx），如 qrs-0720.docx
 │   │   └── archive/      # 历史 PRD 归档
 │   └── ui_design/        # 界面设计图，按章节名组织
 └── outputs/              # 输出层
@@ -88,9 +94,9 @@ case-generator/
 
 | 场景 | 输入 | 输出 |
 |---|---|---|
-| 新功能上线前 | PRD 文件 | 功能、异常、边界等完整用例 |
-| UI 改版 | 界面设计图说明 | 交互、展示、兼容性用例 |
-| 补充存量模块 | 已有用例 + 新需求 | 去重后仅生成缺失场景 |
+| QRS 新功能上线前 | PRD 文件 | 功能、异常、边界等完整用例 |
+| QRS UI 改版 | 界面设计图说明 | 交互、展示、兼容性用例 |
+| 补充 QRS 存量模块 | 已有用例 + 新需求 | 去重后仅生成缺失场景 |
 
 ## 快速开始
 
@@ -98,36 +104,45 @@ case-generator/
 
 | 输入类型 | 保存位置 | 说明 |
 |---|---|---|
-| 原始 Word 文档 | `inputs/requirements/raw_docs/` | 产品经理提供的 .docx，默认作为事实源直接按章节读取 |
+| 原始 Word 文档 | `inputs/requirements/raw_docs/` | 当前为 `qrs-0720.docx`（QRS PRD），默认作为事实源直接按章节读取 |
 | UI 设计图 | `inputs/ui_design/<章节名>/` | 目录名与 PRD 章节名一致，AI 自动匹配读取 |
 | 历史 PRD 归档 | `inputs/requirements/archive/` | 已处理过的历史版本 |
 
-### 2. 配置业务常量
+### 2. 业务常量配置
 
-打开 `scripts/business_constants.py`，按文件顶部的"换项目检查清单"填写：
+QRS 业务常量已填入 `scripts/business_constants.py`，包含：
 
-- `PROJECT_SPECIFIC_HEADERS`：项目专属追踪字段（拼接到通用 9 列后）
-- `SHEET_NAME` / `CREATOR_NAME`：Excel 品牌
-- `COLUMN_WIDTH_BY_HEADER`：列宽
-- `CORE_FLOW_KEYWORDS`：核心链路覆盖词表（可选，留空则跳过该业务校验）
-- `ENABLED_BUSINESS_RULES`：启用的业务校验规则
+- `PROJECT_SPECIFIC_HEADERS`：QRS 专属追踪字段（`关联模块`、`关联数据流`、`是否涉及 ALCOA+`、`是否涉及电子签名`），拼接到通用 9 列后
+- `SHEET_NAME` / `CREATOR_NAME`：QRS Excel 品牌
+- `COLUMN_WIDTH_BY_HEADER`：QRS 字段列宽
+- `CORE_FLOW_KEYWORDS`：QRS 核心链路覆盖词表（共 6 条链路）
+- `ENABLED_BUSINESS_RULES`：启用的业务校验规则（`group_depth_limit` + `core_flow_coverage`）
 
-### 3. 填充业务知识
+QRS PRD 升级时，应同步更新上述配置；不需要修改框架代码。
 
-先阅读 `generation_rules/project_onboarding_rules.md`，再按 `knowledge_base/README.md` 推荐结构，根据项目实际填充：
+### 3. 业务知识
 
-- `knowledge_base/project_overview.md`
-- `knowledge_base/business_glossary.md`
-- `knowledge_base/user_roles.md`
-- `knowledge_base/core_flows/<flow_name>.md`
+QRS 业务知识已填入 `knowledge_base/`，按推荐结构组织：
 
-### 4. 填充难度关键字（可选）
+- `knowledge_base/project_overview.md` ✅ 已填入 QRS 系统定位、价值主张、功能架构图、核心业务主线流程、数据流转关系、模块索引
+- `knowledge_base/business_glossary.md` —— 待补充：QRS 状态枚举、字段约束、单位规范
+- `knowledge_base/user_roles.md` —— 待补充：6 类角色（质量经理 / QA 专员 / 工艺工程师 / 生产人员 / 实验室人员 / 系统管理员）的详细权限矩阵
+- `knowledge_base/core_flows/<flow_name>.md` —— 待补充：QRS 端到端业务流程
 
-`generation_rules/difficulty_level_rules.md` 中每个 `difficulty-rule` 配置块当前是 `<TODO_*>` 占位符。新项目按业务实际替换为关键字，即可让难度推断命中强规则路径；不想使用强规则关键字时可保留占位符（评分机制仍可用）。
+### 4. 难度关键字
+
+`generation_rules/difficulty_level_rules.md` 中的所有 `<TODO_*>` 占位符已替换为 QRS 业务关键字：
+
+- 困难强规则：`跨模块联动`、`跨环境迁移`、`CPV`、`SPC`、`Cpk`、`Ppk`、`控制图`、`规格限`、`电子签名`、`审计追踪`、`ALCOA+`、`报告放行`、`计划审批`、`自动分解` 等
+- 困难组合：`分析模版 + 执行分析`、`报告模版 + 实例化`、`回顾计划 + 自动分解`、`回顾对象 + CQA/CPP/IPC`
+- 简单优先：字段校验、配置操作、导入文件、模板下载关键字
+- 复杂度信号：`审批`、`复核`、`生效`、`放行`、`归档`、`版本管理`、`操作日志`、`统计计算`、`关联引用` 等
+
+QRS 业务调整时，应同步更新这些关键字清单。
 
 ### 5. 校验项目配置
 
-生成正式用例前，建议先运行项目配置校验，检查旧项目残留、临时 Word 文件、输出产物污染和关键配置缺失：
+生成正式用例前，建议先运行项目配置校验，检查 QRS 配置完整性、Word 临时锁文件和输出产物污染：
 
 ```bash
 python scripts/validate_project_config.py

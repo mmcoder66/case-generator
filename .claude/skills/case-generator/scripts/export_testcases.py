@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import zipfile
@@ -90,6 +91,28 @@ GENERATION_TIME_RE = re.compile(
 # 每列固定列宽集中在 business_constants.COLUMN_WIDTH_BY_HEADER；
 # 动态分组列未显式配置时使用 GROUP_COLUMN_WIDTH 兜底。
 GROUP_COLUMN_WIDTH = 16
+
+
+def site_type_for_case_file(case_file: Path) -> str:
+    """根据用例文件路径判断站点类型。"""
+    if not SITE_TYPES:
+        return ""
+    parts = case_file.parts
+    for site_type in SITE_TYPES:
+        if site_type in parts:
+            return site_type
+    return SITE_TYPES[0] if SITE_TYPES else ""
+
+
+def group_case_files_by_site(case_files: list[Path]) -> dict[str, list[Path]]:
+    """按站点类型分组用例文件。无站点分类时返回单组。"""
+    if not SITE_TYPES:
+        return {"": case_files}
+    grouped: dict[str, list[Path]] = {}
+    for f in case_files:
+        site = site_type_for_case_file(f)
+        grouped.setdefault(site, []).append(f)
+    return grouped
 
 
 def column_name(index: int) -> str:
@@ -377,8 +400,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--source",
-        default=str(root / "outputs" / "origin_exports"),
-        help="输入文件或目录，默认扫描 outputs/origin_exports/**/*_testcases.md",
+        default=None,
+        help="输入文件或目录，默认扫描 outputs/<project>/business_site/origin_exports/",
     )
     parser.add_argument(
         "-o",
@@ -411,6 +434,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "也可显式传入 Unix 秒级时间戳、YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS。"
             "仅在 --source 指向单个 Markdown 文件时可用"
         ),
+    )
+    parser.add_argument(
+        "--project",
+        default=os.environ.get("CASE_GEN_PROJECT", "qrs"),
+        help="项目名称（qrs/cpv），默认读取环境变量 CASE_GEN_PROJECT 或 qrs",
     )
     return parser.parse_args(argv)
 
@@ -445,9 +473,14 @@ def build_output_path(output_arg: str | None, output_dir: Path) -> Path:
 def main(argv: list[str]) -> int:
     configure_output_encoding()
     root = project_root()
-    output_dir = root / "outputs" / "excel_exports"
-    origin_dir = root / "outputs" / "origin_exports"
     args = parse_args(argv)
+
+    project = args.project
+    output_dir = root / "outputs" / project / "business_site" / "excel_exports"
+    origin_dir = root / "outputs" / project / "business_site" / "origin_exports"
+    if args.source is None:
+        args.source = str(origin_dir)
+    # args.output 保持 None 时走默认路径逻辑，不设为目录字符串
 
     try:
         source = ensure_under(build_source_path(args.source, root), root, "输入路径")

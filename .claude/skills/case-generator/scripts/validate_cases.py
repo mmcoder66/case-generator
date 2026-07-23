@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -58,11 +59,14 @@ from business_constants import (
     CORE_FLOW_KEYWORDS,
     ENABLED_BUSINESS_RULES,
     MAX_GROUP_DEPTH,
+    ALL_VALID_TAGS,
+    CHANGE_TAGS,
 )
 from case_utils import (
     DIFFICULTY_LEVELS,
     EXPECTED_HEADERS,
     GROUP_HEADER_LEVELS,
+    GROUP_HEADERS_BY_LEVEL,
     VALID_PRIORITIES,
     build_source_path,
     configure_output_encoding,
@@ -76,6 +80,7 @@ from case_utils import (
     is_separator_row,
     normalize_cell,
     parse_case_file,
+    parse_coverage_tables,
     project_root,
     read_text_file,
     required_headers_for,
@@ -171,6 +176,26 @@ DURATION_PLACEHOLDER_RE = re.compile(r"生成耗时：(?:待回填|约|预计)")
 # 生成时间：提取行内容并校验格式必须为 YYYY-MM-DD HH:MM:SS（精确到秒）
 GENERATED_TIME_LINE_RE = re.compile(r"生成时间：([^\n\r]+)")
 GENERATED_TIME_FORMAT_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+# 元信息块提取正则：用于覆盖率校验中定位来源 docx 和来源章节
+SOURCE_DOC_RE = re.compile(r"来源文档：\s*(.+)")
+SOURCE_SECTION_RE = re.compile(r"来源章节：\s*(.+)")
+
+# PRD 表格行文本前缀（与 extract_docx._table_lines 输出保持一致）
+PRD_TABLE_ROW_PREFIX = "表格行"
+# PRD 状态对照表识别：表头同时含"状态"和"操作"
+PRD_STATE_TABLE_HEADER_HINTS = ("状态", "操作")
+# PRD 字段定义表识别：表头同时含"字段名称"和"必填"
+PRD_FIELD_TABLE_HEADER_HINTS = ("字段名称", "必填")
+
+# PRD 顶级章节编号（汉字数字+顿号），用于切分章节内的子项
+PRD_TOP_LEVEL_CHAPTER_RE = re.compile(r"[一二三四五六七八九十]+、")
+# PRD 子项编号（数字+.、)、)），用于切分子项
+PRD_SUB_ITEM_NUMBER_RE = re.compile(r"[0-9]+[.、）)]")
+# 子项标题截断符：标题在遇到这些标点前都视为关键字一部分
+PRD_SUB_ITEM_TITLE_BOUNDARY_RE = re.compile(r"[，。：；,;:]")
+# 子项关键字最大长度
+PRD_SUB_ITEM_KEYWORD_MAX_LENGTH = 10
 
 
 @dataclass
@@ -276,6 +301,8 @@ def run_all_validations(
     issues.extend(validate_group_adjacency(cases))
     issues.extend(validate_group_depth_consistency(cases))
     issues.extend(validate_duration_metadata(case_files))
+    issues.extend(validate_coverage_references(case_files, cases))
+    issues.extend(validate_hard_coverage(case_files, cases))
     # 业务校验链：按 business_constants.ENABLED_BUSINESS_RULES 开关加载
     for rule_name in ENABLED_BUSINESS_RULES:
         validator = _BUSINESS_RULE_REGISTRY.get(rule_name)
@@ -665,7 +692,7 @@ def validate_case_rows(cases: list[dict[str, str]]) -> list[Issue]:
             issues.append(
                 case_issue(
                     case,
-                    "WARN",
+                    "ERROR",
                     "mismatched_difficulty_tag",
                     f"用例标签中的难度为 {'、'.join(difficulty_tags)}，按 difficulty_level_rules.md 推断应为：{expected_difficulty}{difficulty_reason_text}",
                     "用例标签",
@@ -675,12 +702,27 @@ def validate_case_rows(cases: list[dict[str, str]]) -> list[Issue]:
             issues.append(
                 case_issue(
                     case,
-                    "WARN",
+                    "ERROR",
                     "multiple_difficulty_tags",
                     f"用例标签中存在多个难度等级：{'、'.join(difficulty_tags)}，仅应保留 {expected_difficulty}{difficulty_reason_text}",
                     "用例标签",
                 )
             )
+
+        if ALL_VALID_TAGS:
+            unknown_tags = [tag for tag in tags if tag not in ALL_VALID_TAGS]
+            if unknown_tags:
+                issues.append(
+                    case_issue(
+                        case,
+                        "WARN",
+                        "unknown_case_tag",
+                        f"用例标签存在非约定值：{'、'.join(unknown_tags)}；"
+                        f"只允许难度等级（简单/一般/困难）"
+                        + (f"和变更类标记（{'/'.join(CHANGE_TAGS)}）" if CHANGE_TAGS else ""),
+                        "用例标签",
+                    )
+                )
 
         if not is_ui_case(case) and is_display_only_candidate(case):
             issues.append(
@@ -1023,6 +1065,372 @@ def validate_duration_metadata(case_files: list[Path]) -> list[Issue]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# 覆盖率校验
+#
+# 两个 check 都需要 case_files（覆盖率表和来源 docx 都在文件层级），
+# 因此挂在通用校验链里，不进业务注册表（业务注册表签名只有 cases）。
+# ---------------------------------------------------------------------------
+
+
+def extract_source_doc_path(metadata: str) -> str | None:
+    """从元信息块提取"来源文档"路径，不存在返回 None。"""
+    match = SOURCE_DOC_RE.search(metadata)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _strip_leading_number(text: str) -> str:
+    """剥离前导编号（如 '3.3.1 新增任务管理菜单' → '新增任务管理菜单'）。
+
+    兼容阿拉伯数字分段编号（3.3.1）和汉字数字编号（三、）。
+    """
+    stripped = text.strip()
+    stripped = re.sub(r"^[\d.]+[.\s]*", "", stripped)
+    stripped = re.sub(r"^[一二三四五六七八九十]+、\s*", "", stripped)
+    return stripped.strip()
+
+
+def extract_source_section(metadata: str) -> str | None:
+    """从元信息块提取"来源章节"名称，不存在返回 None。
+
+    自动剥离前导编号（如 '3.3.1 新增任务管理菜单' → '新增任务管理菜单'）。
+    """
+    match = SOURCE_SECTION_RE.search(metadata)
+    if not match:
+        return None
+    return _strip_leading_number(match.group(1))
+
+
+def _cases_by_file(cases: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for case in cases:
+        grouped.setdefault(case.get("_source_file", ""), []).append(case)
+    return grouped
+
+
+def validate_coverage_references(
+    case_files: list[Path], cases: list[dict[str, str]]
+) -> list[Issue]:
+    """检查覆盖率对照表引用的用例名称是否在用例表中真实存在。
+
+    不存在的引用会直接 ERROR 阻断导出——这通常是用例被改名但覆盖率表
+    未同步更新导致的，必须人工确认。
+    """
+    issues: list[Issue] = []
+    cases_by_file = _cases_by_file(cases)
+
+    for case_file in case_files:
+        # 只对生成出来的用例文件做此检查；参考模板里可能没有覆盖率表
+        if not is_generated_output_path(case_file):
+            continue
+        entries = parse_coverage_tables(case_file)
+        if not entries:
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="coverage_table_missing",
+                    message="文件无需求覆盖率对照表，覆盖率引用校验已跳过",
+                    file=str(case_file),
+                )
+            )
+            continue
+
+        file_cases = cases_by_file.get(str(case_file), [])
+        case_name_set = {case.get("用例名称", "") for case in file_cases}
+        case_name_set.discard("")
+
+        for entry in entries:
+            for case_name in entry.get("case_names", []):
+                if case_name not in case_name_set:
+                    issues.append(
+                        Issue(
+                            severity="ERROR",
+                            code="coverage_reference_invalid",
+                            message=(
+                                f"覆盖率对照表引用的用例 '{case_name}' "
+                                f"在用例表中不存在"
+                            ),
+                            file=str(entry.get("source_file", "")),
+                            line=entry.get("source_line"),
+                            field="覆盖用例名称",
+                        )
+                    )
+    return issues
+
+
+_PRD_TABLE_TYPE_LABELS = {
+    "state_table": "状态对照表",
+    "field_table": "字段定义表",
+}
+
+
+def _parse_prd_table_row_text(text: str) -> tuple[int | None, list[str]]:
+    """从 '表格行N：cell1 | cell2' 文本中解析行号和单元格列表。
+
+    由 extract_docx._table_lines 生成的格式，行号用于识别表格边界
+    （每个表格的第 1 行是表头）。
+    """
+    match = re.match(r"^表格行(\d+)：(.*)$", text)
+    if not match:
+        return None, []
+    row_num = int(match.group(1))
+    rest = match.group(2)
+    cells = [cell.strip() for cell in rest.split("|")]
+    return row_num, cells
+
+
+def extract_prd_table_items(
+    section_blocks: list,  # list[DocBlock]，用 duck typing 避免 import 循环
+) -> list[tuple[str, str]]:
+    """提取 PRD 章节中的表格行需求点。
+
+    识别两类表格：
+    - 状态对照表（表头含"状态"和"操作"）→ ``state_table``
+    - 字段定义表（表头含"字段名称"和"必填"）→ ``field_table``
+
+    其他表格（如需求概述类）跳过。返回 ``[(table_type, key), ...]``，
+    key 取每条数据行的第一列。
+    """
+    items: list[tuple[str, str]] = []
+    current_rows: list[list[str]] = []
+
+    def flush() -> None:
+        if not current_rows:
+            return
+        if len(current_rows) < 2:
+            current_rows.clear()
+            return
+        header_text = " ".join(current_rows[0])
+        if all(hint in header_text for hint in PRD_STATE_TABLE_HEADER_HINTS):
+            table_type = "state_table"
+        elif all(hint in header_text for hint in PRD_FIELD_TABLE_HEADER_HINTS):
+            table_type = "field_table"
+        else:
+            current_rows.clear()
+            return
+        for row_cells in current_rows[1:]:
+            if not row_cells:
+                continue
+            key = row_cells[0].strip()
+            if key:
+                items.append((table_type, key))
+        current_rows.clear()
+
+    for block in section_blocks:
+        if getattr(block, "kind", None) != "table":
+            flush()
+            continue
+        row_num, cells = _parse_prd_table_row_text(block.text)
+        if row_num == 1 and current_rows:
+            # 遇到新的"表格行1"说明上一个表格结束
+            flush()
+        if cells:
+            current_rows.append(cells)
+    flush()
+
+    return items
+
+
+def extract_prd_numbered_items(
+    section_blocks: list,  # list[DocBlock]
+) -> list[str]:
+    """提取 PRD 章节中的编号子项关键字。
+
+    流程：
+    1. 收集所有 paragraph + table 文本（不含 heading）
+    2. 用 [一二三四五六七八九十]+、 切分顶级章节
+    3. 在每个章节内用 [0-9]+[.、）)] 切分子项
+    4. 对每个子项，取编号后到首个边界标点之间的文字，截取前 10 字作为 keyword
+    """
+    lines: list[str] = []
+    for block in section_blocks:
+        if getattr(block, "kind", None) in ("paragraph", "table"):
+            lines.append(block.text)
+    text = "\n".join(lines)
+
+    chapter_marks = list(PRD_TOP_LEVEL_CHAPTER_RE.finditer(text))
+    if chapter_marks:
+        chapter_texts: list[str] = []
+        if chapter_marks[0].start() > 0:
+            chapter_texts.append(text[: chapter_marks[0].start()])
+        for i, match in enumerate(chapter_marks):
+            start = match.end()
+            end = (
+                chapter_marks[i + 1].start() if i + 1 < len(chapter_marks) else len(text)
+            )
+            chapter_texts.append(text[start:end])
+    else:
+        chapter_texts = [text]
+
+    keywords: list[str] = []
+    for chapter_text in chapter_texts:
+        sub_marks = list(PRD_SUB_ITEM_NUMBER_RE.finditer(chapter_text))
+        if not sub_marks:
+            continue
+        for i, match in enumerate(sub_marks):
+            start = match.end()
+            end = (
+                sub_marks[i + 1].start() if i + 1 < len(sub_marks) else len(chapter_text)
+            )
+            sub_text = chapter_text[start:end].strip()
+            if not sub_text:
+                continue
+            first_line = sub_text.split("\n", 1)[0].strip()
+            boundary = PRD_SUB_ITEM_TITLE_BOUNDARY_RE.search(first_line)
+            title = first_line[: boundary.start()].strip() if boundary else first_line
+            if not title:
+                continue
+            keywords.append(title[:PRD_SUB_ITEM_KEYWORD_MAX_LENGTH])
+    return keywords
+
+
+def validate_hard_coverage(
+    case_files: list[Path], cases: list[dict[str, str]]
+) -> list[Issue]:
+    """检查 PRD 表格行和编号项是否在覆盖率对照表中有对应覆盖记录。
+
+    弱信号（WARN）：未覆盖时仅提示人工确认，不阻断导出。来源 docx
+    不可读或 python-docx 未安装时整体跳过本文件检查。
+    """
+    issues: list[Issue] = []
+    cases_by_file = _cases_by_file(cases)
+
+    for case_file in case_files:
+        if not is_generated_output_path(case_file):
+            continue
+        try:
+            metadata = file_metadata_block(case_file)
+        except OSError:
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="prd_doc_unavailable",
+                    message="无法读取元信息块，硬覆盖检查已跳过",
+                    file=str(case_file),
+                )
+            )
+            continue
+
+        source_doc = extract_source_doc_path(metadata)
+        if not source_doc:
+            # 没有来源文档（如模板文件）不是错，静默跳过
+            continue
+        source_section = extract_source_section(metadata)
+
+        # 延迟 import：python-docx 不是必装依赖
+        try:
+            from extract_docx import (
+                extract_section,
+                read_docx_blocks,
+                resolve_docx_path,
+            )
+        except ImportError:
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="prd_doc_unavailable",
+                    message="未安装 python-docx，PRD 硬覆盖检查已跳过",
+                    file=str(case_file),
+                )
+            )
+            continue
+
+        try:
+            docx_path = resolve_docx_path(source_doc)
+            blocks = read_docx_blocks(docx_path)
+            if source_section:
+                section_blocks = extract_section(blocks, source_section)
+            else:
+                section_blocks = blocks
+        except (FileNotFoundError, ValueError):
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="prd_doc_unavailable",
+                    message=(
+                        f"来源文档 {source_doc} 不存在或不可读，"
+                        f"PRD 硬覆盖检查已跳过"
+                    ),
+                    file=str(case_file),
+                )
+            )
+            continue
+        except Exception as exc:
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="prd_doc_unavailable",
+                    message=(
+                        f"读取来源文档 {source_doc} 失败：{exc}，"
+                        f"PRD 硬覆盖检查已跳过"
+                    ),
+                    file=str(case_file),
+                )
+            )
+            continue
+
+        if not section_blocks:
+            issues.append(
+                Issue(
+                    severity="WARN",
+                    code="prd_doc_unavailable",
+                    message=(
+                        f"在来源文档中未找到章节 '{source_section}'，"
+                        f"PRD 硬覆盖检查已跳过"
+                    ),
+                    file=str(case_file),
+                )
+            )
+            continue
+
+        entries = parse_coverage_tables(case_file)
+        if not entries:
+            # coverage_reference_invalid 检查已提示 coverage_table_missing，
+            # 此处不再重复
+            continue
+
+        # 把所有覆盖率条目的 requirement_point 和 requirement_desc 拼成可搜索的文本
+        coverage_texts = [
+            f"{entry.get('requirement_point', '')} {entry.get('requirement_desc', '')}"
+            for entry in entries
+        ]
+
+        # 检查 PRD 表格行
+        for table_type, key in extract_prd_table_items(section_blocks):
+            if not any(key in text for text in coverage_texts):
+                label = _PRD_TABLE_TYPE_LABELS.get(table_type, table_type)
+                issues.append(
+                    Issue(
+                        severity="WARN",
+                        code="prd_table_row_uncovered",
+                        message=(
+                            f"PRD {label}的 '{key}' 行在覆盖率对照表中"
+                            f"未找到对应覆盖记录，请人工确认"
+                        ),
+                        file=str(case_file),
+                    )
+                )
+
+        # 检查 PRD 编号项
+        for keyword in extract_prd_numbered_items(section_blocks):
+            if not any(keyword in text for text in coverage_texts):
+                issues.append(
+                    Issue(
+                        severity="WARN",
+                        code="prd_numbered_item_uncovered",
+                        message=(
+                            f"PRD 编号项 '{keyword}' 在覆盖率对照表中"
+                            f"未找到明确匹配，请人工确认"
+                        ),
+                        file=str(case_file),
+                    )
+                )
+
+    return issues
+
+
 def validate_group_depth_limit(cases: list[dict[str, str]]) -> list[Issue]:
     """检查分组深度是否超过 MAX_GROUP_DEPTH 上限。
 
@@ -1058,10 +1466,18 @@ def validate_group_depth_limit(cases: list[dict[str, str]]) -> list[Issue]:
 # 无条件调用；业务校验通过 business_constants.ENABLED_BUSINESS_RULES 开关按需加载，
 # 换项目时可整体关闭、只保留其一，或在下方注册新的业务规则。
 # 新增业务校验时：写 validate_* 函数 → 在此注册 → 在 ENABLED_BUSINESS_RULES 加名字。
-_BUSINESS_RULE_REGISTRY = {
+_BUSINESS_RULE_REGISTRY: dict[str, ...] = {
     "core_flow_coverage": validate_core_flow_coverage,
     "group_depth_limit": validate_group_depth_limit,
 }
+
+# 动态加载项目专属业务校验规则
+try:
+    from project_business_rules import register_business_rules
+    for name, func in register_business_rules().items():
+        _BUSINESS_RULE_REGISTRY[name] = func
+except ImportError:
+    pass  # 项目无专属业务规则时不影响
 
 
 def validate_group_adjacency(cases: list[dict[str, str]]) -> list[Issue]:
@@ -1108,29 +1524,52 @@ def validate_group_adjacency(cases: list[dict[str, str]]) -> list[Issue]:
                 seen_full_path[full_path] = case
             prev_full_path = full_path
 
-        # 检查 2：一级分组聚集性
-        seen_l1: dict[str, dict[str, str]] = {}
-        prev_l1: str | None = None
-        for case in file_cases:
-            l1 = case.get("一级分组", "")
-            if not l1:
+        # 检查 2：按层级检查分组聚集性（一级到 MAX_GROUP_DEPTH-1 级）
+        # 完整路径（最深层级）的相邻性由检查 1（group_not_adjacent）覆盖
+        level_names_cn = {1: "一级", 2: "二级", 3: "三级", 4: "四级", 5: "五级"}
+        for level in range(1, MAX_GROUP_DEPTH):
+            level_header = GROUP_HEADERS_BY_LEVEL.get(level)
+            if not level_header:
                 continue
-            if l1 in seen_l1 and prev_l1 != l1 and prev_l1 is not None:
-                first_case = seen_l1[l1]
-                first_line = first_case.get("_source_line", "")
-                issues.append(
-                    case_issue(
-                        case,
-                        "ERROR",
-                        "first_level_group_split",
-                        f"一级分组 [{l1}] 与第 {first_line} 行的同名一级分组不相邻，被其他一级分组打断；"
-                        "同一一级分组下的所有用例必须聚集在连续区间内",
-                        "一级分组",
+            headers_up_to = [
+                GROUP_HEADERS_BY_LEVEL[l] for l in range(1, level + 1) if l in GROUP_HEADERS_BY_LEVEL
+            ]
+            seen_prefix: dict[str, dict[str, str]] = {}
+            prev_prefix: str | None = None
+            for case in file_cases:
+                # 构建从一级到当前层级的路径前缀
+                parts: list[str] = []
+                for h in headers_up_to:
+                    v = case.get(h, "").strip()
+                    if not v:
+                        break
+                    parts.append(v)
+                # 当前用例未填到本层级时跳过（不影响该层级检查）
+                if len(parts) < level:
+                    prev_prefix = None  # 重置前序，避免跨层级空值误判
+                    continue
+                prefix = " / ".join(parts)
+                if (
+                    prefix in seen_prefix
+                    and prev_prefix is not None
+                    and prev_prefix != prefix
+                ):
+                    first_case = seen_prefix[prefix]
+                    first_line = first_case.get("_source_line", "")
+                    level_cn = level_names_cn.get(level, f"{level}级")
+                    issues.append(
+                        case_issue(
+                            case,
+                            "ERROR",
+                            "group_level_split",
+                            f"{level_cn}分组前缀 [{prefix}] 与第 {first_line} 行的同前缀分组不相邻，"
+                            f"被其他分组打断；同一上级分组下相同{level_cn}分组前缀的所有用例必须聚集在连续区间内",
+                            level_header,
+                        )
                     )
-                )
-            if l1 not in seen_l1:
-                seen_l1[l1] = case
-            prev_l1 = l1
+                if prefix not in seen_prefix:
+                    seen_prefix[prefix] = case
+                prev_prefix = prefix
 
     return issues
 
@@ -1310,8 +1749,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="校验 Markdown 测试用例表格")
     parser.add_argument(
         "--source",
-        default=str(root / "outputs" / "origin_exports"),
-        help="输入文件或目录，默认扫描 outputs/origin_exports/**/*_testcases.md",
+        default=None,
+        help="输入文件或目录，默认扫描 outputs/<project>/business_site/origin_exports/**/*_testcases.md",
     )
     parser.add_argument(
         "--summary-only",
@@ -1328,6 +1767,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="以 JSON 格式输出校验结果，便于 Agent 或自动化流程解析",
     )
+    parser.add_argument(
+        "--project",
+        default=os.environ.get("CASE_GEN_PROJECT", "qrs"),
+        help="项目名称（qrs/cpv），默认读取环境变量 CASE_GEN_PROJECT 或 qrs",
+    )
     return parser.parse_args(argv)
 
 
@@ -1336,10 +1780,14 @@ def main(argv: list[str]) -> int:
     root = project_root()
     args = parse_args(argv)
 
+    # 根据项目设置默认 source
+    if args.source is None:
+        args.source = str(root / "outputs" / args.project / "business_site" / "origin_exports")
+
     try:
         source = ensure_under(build_source_path(args.source, root), root, "输入路径")
         if args.fix:
-            output_cases_dir = root / "outputs" / "origin_exports"
+            output_cases_dir = root / "outputs" / args.project / "business_site" / "origin_exports"
             ensure_under(source, output_cases_dir, "--fix 输入路径")
         case_files = discover_case_files(source)
     except (FileNotFoundError, ValueError) as error:

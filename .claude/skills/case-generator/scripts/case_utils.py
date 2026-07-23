@@ -19,7 +19,7 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from business_constants import PROJECT_SPECIFIC_HEADERS
+from business_constants import PROJECT_SPECIFIC_HEADERS, CHANGE_TAGS, ALL_VALID_TAGS
 
 
 DEFAULT_GROUP_HEADERS = ["一级分组", "二级分组", "三级分组"]
@@ -241,14 +241,6 @@ def _normalize_keyword_text(*values: str) -> str:
     return "".join(normalized.split()).lower()
 
 
-def _normalize_report_lifecycle_text(*values: str) -> str:
-    """按 difficulty_level_rules.md 的 report_lifecycle_exclusions 配置，从文本中移除指定关键字。"""
-    text = _normalize_keyword_text(*values)
-    for keyword in _difficulty_string_list("report_lifecycle_exclusions"):
-        text = text.replace(keyword, "")
-    return text
-
-
 def count_verification_points(value: str) -> int:
     """统计预期结果中的独立校验点数量。"""
     normalized = normalize_cell(value)
@@ -306,7 +298,28 @@ DIFFICULTY_RULE_BLOCK_RE = re.compile(
 
 
 def _load_difficulty_rule_config() -> dict[str, str]:
-    rules_path = project_root() / "generation_rules" / "difficulty_level_rules.md"
+    """加载难度关键字配置。
+
+    优先从 projects/<project>/difficulty_keywords.md 加载（项目专属关键字）。
+    如果项目专属文件不存在，回退到 generation_rules/difficulty_level_rules.md。
+    """
+    root = project_root()
+
+    # 尝试从项目专属文件加载
+    project_name = getattr(sys.modules.get("business_constants"), "PROJECT_NAME", None)
+    if project_name:
+        project_rules_path = root / "projects" / project_name / "difficulty_keywords.md"
+        if project_rules_path.exists():
+            markdown_text = read_text_file(project_rules_path, encoding="utf-8")
+            config = {
+                match.group(1): match.group(2).strip()
+                for match in DIFFICULTY_RULE_BLOCK_RE.finditer(markdown_text)
+            }
+            if config:
+                return config
+
+    # 回退到通用规则文件
+    rules_path = root / "generation_rules" / "difficulty_level_rules.md"
     markdown_text = read_text_file(rules_path, encoding="utf-8")
     config = {
         match.group(1): match.group(2).strip()
@@ -410,9 +423,6 @@ def infer_case_difficulty_with_reason(case: dict[str, str]) -> tuple[str, list[s
     normalized_title_text = _normalize_keyword_text(title_text)
     normalized_step_expectation_text = _normalize_keyword_text(step_text, expectation_text)
     normalized_combination_text = _normalize_keyword_text(title_text, step_text)
-    normalized_report_lifecycle_text = _normalize_report_lifecycle_text(
-        title_text, step_text
-    )
     hard_reasons: list[str] = []
     hard_title_keywords = _matched_keywords(
         normalized_title_text, difficult_high_confidence_keywords
@@ -437,7 +447,7 @@ def infer_case_difficulty_with_reason(case: dict[str, str]) -> tuple[str, list[s
         )
 
     hard_combinations = _matched_combinations(
-        normalized_report_lifecycle_text, difficult_keyword_combinations
+        normalized_combination_text, difficult_keyword_combinations
     )
     if hard_combinations:
         hard_reasons.append(f"命中困难组合关键字：{'、'.join(hard_combinations)}")
@@ -486,7 +496,7 @@ def infer_case_difficulty_with_reason(case: dict[str, str]) -> tuple[str, list[s
         step_text,
         expectation_text,
     )
-    complexity_keyword_text = _normalize_report_lifecycle_text(
+    complexity_keyword_text = _normalize_keyword_text(
         *complexity_keyword_fields
     )
     complexity_keywords = _matched_keywords(
@@ -582,8 +592,12 @@ def infer_case_difficulty(case: dict[str, str]) -> str:
 
 
 def merge_difficulty_tag(existing_tags: str, difficulty: str) -> str:
-    """用例标签只保留难度等级。"""
-    return difficulty
+    """用例标签保留难度等级和变更标签（如有）。"""
+    tags = [difficulty] if difficulty else []
+    for tag in CHANGE_TAGS:
+        if tag in existing_tags:
+            tags.append(tag)
+    return "、".join(tags)
 
 
 def apply_difficulty_tag(case: dict[str, str]) -> dict[str, str]:
@@ -680,3 +694,89 @@ def discover_case_files(source: Path) -> list[Path]:
         # 通过 --source 显式指定才能被处理。
         return sorted(source.rglob("*_testcases.md"))
     raise FileNotFoundError(f"输入路径不存在：{source}")
+
+
+# 需求覆盖率对照表表头识别关键字：同时命中才认为是覆盖率表。
+COVERAGE_TABLE_HEADER_HINTS = ("需求点", "覆盖用例名称")
+# 覆盖用例名称拆分时兼容的英文逗号。
+COVERAGE_CASE_NAME_SPLIT_RE = re.compile(r"[、,]")
+
+
+def _is_coverage_table_header(cells: list[str]) -> bool:
+    if len(cells) < 3:
+        return False
+    joined = " ".join(cells)
+    return all(hint in joined for hint in COVERAGE_TABLE_HEADER_HINTS)
+
+
+def parse_coverage_tables(path: Path) -> list[dict[str, object]]:
+    """扫描 Markdown 文件中所有"需求覆盖率对照表"，返回结构化条目。
+
+    识别逻辑：逐行扫描，当某行表头同时含"需求点"和"覆盖用例名称"时进入
+    覆盖率表模式，遇到非表格行退出。一份文件可能含多张覆盖率表（主表 +
+    追加记录），全部都会被解析。
+
+    返回结构示例::
+
+        [
+            {
+                "requirement_point": "[PRD] 字段定义表-任务名称",
+                "requirement_desc": "必填，长度 2-100 字符",
+                "case_names": ["任务名称必填与长度校验"],
+                "source_file": "outputs/origin_exports/xxx.md",
+                "source_line": 156,
+            },
+            ...
+        ]
+    """
+    try:
+        lines = read_text_file(path, encoding="utf-8-sig").splitlines()
+    except UnicodeDecodeError:
+        lines = read_text_file(path, encoding="utf-8").splitlines()
+
+    entries: list[dict[str, object]] = []
+    source_file = str(path)
+
+    index = 0
+    while index < len(lines):
+        cells = split_markdown_row(lines[index])
+        if not _is_coverage_table_header(cells):
+            index += 1
+            continue
+
+        # 找到覆盖率表头，跳过紧随其后的分隔行
+        index += 1
+        if index < len(lines) and is_separator_row(split_markdown_row(lines[index])):
+            index += 1
+
+        while index < len(lines):
+            line = lines[index]
+            if not line.strip().startswith("|"):
+                break
+            row_cells = split_markdown_row(line)
+            if is_separator_row(row_cells):
+                index += 1
+                continue
+            if len(row_cells) < 3:
+                index += 1
+                continue
+            point = normalize_cell(row_cells[0])
+            desc = normalize_cell(row_cells[1])
+            raw_names = normalize_cell(row_cells[2])
+            case_names = [
+                name.strip()
+                for name in COVERAGE_CASE_NAME_SPLIT_RE.split(raw_names)
+                if name.strip()
+            ]
+            entries.append(
+                {
+                    "requirement_point": point,
+                    "requirement_desc": desc,
+                    "case_names": case_names,
+                    "source_file": source_file,
+                    "source_line": index + 1,
+                }
+            )
+            index += 1
+
+    return entries

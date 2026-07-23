@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Validate whether the case generator is clean enough for a generic project.
+"""Validate QRS case generator configuration and detect leftover contamination.
 
 This script checks for common project-onboarding problems:
-- old business/system-specific words left in rules or templates
+- old business/system-specific code identifiers left in rules or templates
+  (e.g. legacy `CPV_SPECIFIC_HEADERS`, `default_site`, `SITE_TYPES` from prior projects)
 - Word temporary lock files in raw_docs
 - generated output artifacts left in outputs/
-- missing recommended knowledge-base files
+- missing recommended QRS knowledge-base files
 
 It is intentionally conservative: findings are warnings by default and should be
-reviewed before generating formal test cases for a new project.
+reviewed before generating formal test cases.
+
+QRS-specific business terms (质量回顾 / 回顾计划 / 数据复核 / 监控与预警 / QA 专员 / CPV 等)
+are NOT treated as forbidden, because they are legitimate QRS business vocabulary.
 """
 
 from __future__ import annotations
@@ -22,20 +26,15 @@ from pathlib import Path
 from case_utils import configure_output_encoding, project_root, read_text_file
 
 
+# Legacy code identifiers from a prior project (CPV site system). These should
+# never appear in the QRS codebase; if they do, it's leftover contamination.
+# QRS business terms are intentionally excluded — they are legitimate vocabulary.
 DEFAULT_FORBIDDEN_TERMS = [
-    "CPV",
     "CPV_SPECIFIC_HEADERS",
     "default_site",
     "site_type",
     "SITE_TYPES",
     "站点",
-    "质量回顾",
-    "回顾计划",
-    "回顾报告",
-    "数据复核",
-    "监控与预警",
-    "质量经理",
-    "QA 专员",
 ]
 
 SCAN_DIRS = [
@@ -114,7 +113,7 @@ def scan_forbidden_terms(root: Path, terms: list[str]) -> list[Finding]:
                     Finding(
                         "WARN",
                         "forbidden_term",
-                        f"发现可能的旧项目或非通用残留：{term}",
+                        f"发现旧项目代码标识符残留：{term}",
                         path,
                     )
                 )
@@ -136,7 +135,7 @@ def check_word_inputs(root: Path) -> list[Finding]:
                 Finding(
                     "WARN",
                     "input_doc_present",
-                    "发现输入 PRD 文档；通用骨架发布前建议清理或移入 examples/",
+                    "发现输入 PRD 文档；交付前建议确认是否为最新 QRS PRD",
                     path,
                 )
             )
@@ -154,7 +153,7 @@ def check_outputs(root: Path, allow_outputs: bool) -> list[Finding]:
                 Finding(
                     "WARN",
                     "generated_output_present",
-                    "发现已生成交付物；通用骨架发布前建议清理或移入 examples/",
+                    "发现已生成 QRS 用例交付物；交付前建议清理或归档",
                     path,
                 )
             )
@@ -189,7 +188,7 @@ def check_knowledge_base(root: Path) -> list[Finding]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="校验通用用例生成器项目配置和残留")
+    parser = argparse.ArgumentParser(description="校验 QRS 用例生成器项目配置和残留")
     parser.add_argument(
         "--allow-outputs",
         action="store_true",
@@ -199,7 +198,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--term",
         action="append",
         default=[],
-        help="追加要扫描的旧项目或非通用残留词，可重复传入",
+        help="追加要扫描的旧项目残留词（QRS 业务词除外），可重复传入",
     )
     parser.add_argument(
         "--strict",
