@@ -2,7 +2,7 @@
 
 本目录存放 QRS（质量回顾系统）的业务知识，供 Agent 生成用例时参考。
 
-> 知识库以 `inputs/requirements/raw_docs/qrs-0720.docx` 为事实源。如本目录内容与 PRD 原文冲突，以 PRD 原文为准。
+> 知识库以 `inputs/<project>/requirements/raw_docs/qrs-0720.docx` 为事实源。如本目录内容与 PRD 原文冲突，以 PRD 原文为准。
 
 ## 目录结构
 

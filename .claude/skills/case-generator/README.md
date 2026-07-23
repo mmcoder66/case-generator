@@ -6,7 +6,7 @@
 
 核心价值：把 QRS 的需求文档（PRD）、界面设计图等输入，自动转化为结构化、可执行、可导出的测试用例，代替测试人员手工编写用例的重复劳动，并通过规则和脚本保证用例质量。
 
-> 本项目已按 QRS PRD（`inputs/requirements/raw_docs/qrs-0720.docx`）完成接入：
+> 本项目已按 QRS PRD（`inputs/<project>/requirements/raw_docs/qrs-0720.docx`）完成接入：
 > - `scripts/business_constants.py` 已填入 QRS 追踪字段（关联模块、关联数据流、是否涉及 ALCOA+、是否涉及电子签名）、Excel 品牌、QRS 核心链路覆盖词表和业务校验开关。
 > - `knowledge_base/project_overview.md` 已填入 QRS 系统定位、价值主张、功能架构图、核心业务主线流程和数据流转关系。
 > - `generation_rules/difficulty_level_rules.md` 已填入 QRS 业务关键字。
@@ -48,7 +48,7 @@ case-generator/
    - 原始 .docx 是需求事实源，不生成中间需求文件
        │
        ▼
-② AI 读取同名 UI 图目录（inputs/ui_design/<章节名>/）
+② AI 读取同名 UI 图目录（inputs/<project>/ui_design/<章节名>/）
    目录存在且有图片时读取，否则跳过
        │
        ▼
@@ -86,7 +86,7 @@ case-generator/
 
 **知识与规则分离**：业务知识（项目背景、流程）和生成规则（怎么写用例）分开存放，互不干扰，换项目时只需替换知识层（`knowledge_base/`）和业务常量（`scripts/business_constants.py`）。
 
-**参考用例只读**：`testcase_templates/` 存放高质量范例，AI 只读不写，新生成内容一律写入 `outputs/origin_exports/`，模板不被污染。
+**参考用例只读**：`testcase_templates/` 存放高质量范例，AI 只读不写，新生成内容一律写入 `outputs/<project>/business_site/origin_exports/`，模板不被污染。
 
 **完整可追溯**：每条用例通过"分组 + 用例名称"定位，并在 `备注` 中记录具体来源；生成后附需求问题清单、用例统计摘要和需求覆盖率对照表，直接依赖待确认项的用例名称前加 `【待确认】`。
 
@@ -104,9 +104,9 @@ case-generator/
 
 | 输入类型 | 保存位置 | 说明 |
 |---|---|---|
-| 原始 Word 文档 | `inputs/requirements/raw_docs/` | 当前为 `qrs-0720.docx`（QRS PRD），默认作为事实源直接按章节读取 |
-| UI 设计图 | `inputs/ui_design/<章节名>/` | 目录名与 PRD 章节名一致，AI 自动匹配读取 |
-| 历史 PRD 归档 | `inputs/requirements/archive/` | 已处理过的历史版本 |
+| 原始 Word 文档 | `inputs/<project>/requirements/raw_docs/` | 当前为 `qrs-0720.docx`（QRS PRD），默认作为事实源直接按章节读取 |
+| UI 设计图 | `inputs/<project>/ui_design/<章节名>/` | 目录名与 PRD 章节名一致，AI 自动匹配读取 |
+| 历史 PRD 归档 | `inputs/<project>/requirements/archive/` | 已处理过的历史版本 |
 
 ### 2. 业务常量配置
 
@@ -170,8 +170,8 @@ python scripts/validate_project_config.py
 
 Agent 会自动完成校验和导出，最终输出：
 
-- Markdown 用例文件：`outputs/origin_exports/<module_name>_testcases.md`
-- 分需求 Excel 文件：`outputs/excel_exports/<module_name>_testcases.xlsx`
+- Markdown 用例文件：`outputs/<project>/business_site/origin_exports/<module_name>_testcases.md`
+- 分需求 Excel 文件：`outputs/<project>/business_site/excel_exports/<module_name>_testcases.xlsx`
 
 Markdown 用例文件包含元信息块、需求问题清单、用例统计摘要、标准用例表和需求覆盖率对照表。标准用例表使用连续分组列加固定业务字段；`一级分组` 必须填写，`二级分组`、`三级分组` 及后续分组按实际业务层级填写，没有对应节点时留空。若 PRD / UI 未明确具体字段、范围、格式、状态、影响对象或生效条件，且现有规则或测试团队既有判定口径无法给出可执行预期，会在需求问题清单中标记；直接依赖待确认项的用例名称前加 `【待确认】`。
 
@@ -214,25 +214,25 @@ C:\venv\testcase\Scripts\python scripts/extract_docx.py ...
 
 ```bash
 # 列出 Word 文档所有章节（不确定章节名时先执行）
-python scripts/extract_docx.py inputs/requirements/raw_docs/<文件名>.docx --list-sections
+python scripts/extract_docx.py inputs/<project>/requirements/raw_docs/<文件名>.docx --list-sections
 
 # 查找可用 Word 文档（会忽略 ~$ 开头的 Word 临时锁文件）
 python scripts/extract_docx.py --find-docs
 
 # 从 Word 直接提取指定章节（正式生成默认推荐）
-python scripts/extract_docx.py inputs/requirements/raw_docs/<文件名>.docx --section "<章节名>" --print
+python scripts/extract_docx.py inputs/<project>/requirements/raw_docs/<文件名>.docx --section "<章节名>" --print
 
 # 校验本次生成的用例
-python scripts/validate_cases.py --source outputs/origin_exports/<module_name>_testcases.md
+python scripts/validate_cases.py --source outputs/<project>/business_site/origin_exports/<module_name>_testcases.md
 
 # 导出 Excel（校验通过后执行）
-python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md
+python scripts/export_testcases.py --source outputs/<project>/business_site/origin_exports/<module_name>_testcases.md
 
 # 推荐：一次完成校验、导出 Excel 并回填实际生成耗时
-python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --started-at
+python scripts/export_testcases.py --source outputs/<project>/business_site/origin_exports/<module_name>_testcases.md --started-at
 
 # 导出并清理历史 xlsx，仅保留本次文件
-python scripts/export_testcases.py --source outputs/origin_exports/<module_name>_testcases.md --clean
+python scripts/export_testcases.py --source outputs/<project>/business_site/origin_exports/<module_name>_testcases.md --clean
 
 # 如需校验参考用例库，显式指定 source
 python scripts/validate_cases.py --source testcase_templates/modules
@@ -241,7 +241,7 @@ python scripts/validate_cases.py --source testcase_templates/modules
 python scripts/validate_project_config.py
 ```
 
-> 不带 `--source` 时脚本会默认递归扫描 `outputs/origin_exports/` 下所有用例文件；
+> 不带 `--source` 时脚本会默认递归扫描 `outputs/<project>/business_site/origin_exports/` 下所有用例文件；
 > 分需求导出时必须显式指定单个 Markdown 文件，避免生成合并 Excel。
 
 ## 运行测试
@@ -267,8 +267,8 @@ python -m pytest scripts/tests/ -v
 - **scripts/validate_cases.py**：校验格式、质量、优先级和重复场景
 - **scripts/export_testcases.py**：导出 Excel
 - **testcase_templates/modules/**：按可选分类和一级菜单组织的参考用例库，参考文件统一以 `_template.md` 作为公共后缀；二级菜单未拆分时用 `<level2_menu>_template.md`，按需求或子功能拆分时用 `<level2_menu>_<requirement_or_submodule>_template.md`，只读使用，不保存新生成用例
-- **outputs/origin_exports/**：原始 Markdown 用例保存位置
-- **outputs/excel_exports/**：Excel 导出文件保存位置
+- **outputs/<project>/business_site/origin_exports/**：原始 Markdown 用例保存位置
+- **outputs/<project>/business_site/excel_exports/**：Excel 导出文件保存位置
 
 输出文件按业务模块聚合，不按分类、租户、组织或二级菜单继续拆分。
 

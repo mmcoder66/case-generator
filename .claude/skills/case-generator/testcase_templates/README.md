@@ -26,7 +26,7 @@ modules/
 - 通用模板只描述字段结构和编写方法。
 - `modules/` 下的参考用例只读维护；使用 `<category>` 时，每个分类下只保留一级菜单目录。
 - 新增、移动或重命名参考用例文件时，必须同步更新 `modules/menu_index.md`。
-- 新生成或补充的用例必须保存到 `outputs/origin_exports/<module_name>_testcases.md`，不再按项目分类创建子目录。
+- 新生成或补充的用例必须保存到 `outputs/<project>/business_site/origin_exports/<module_name>_testcases.md`，不再按项目分类创建子目录。
 - 不允许把多个模块的新用例混写到一个输出文件中。
 - 生成前必须检查参考用例，避免重复场景。
 
