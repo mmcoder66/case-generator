@@ -1,26 +1,26 @@
-# 需求文档目录
+# CPV 需求文档目录
 
 ## 目录结构
 
 ```text
-requirements/
+inputs/cpv/requirements/
 ├── raw_docs/           # 原始 Word 文档（.docx）
-│   └── <TODO: 当前 PRD 文件名>.docx
+│   └── prd_cj.docx     # 当前 CPV PRD
 └── archive/            # 历史原始 PRD（按需手动归档）
 ```
 
 ## 使用规则
 
-- `raw_docs/` 存放当前使用的原始需求文档。
+- `raw_docs/` 存放 CPV 当前使用的原始需求文档。
 - Word `.docx` 是默认事实源；生成用例时直接从 `.docx` 提取用户指定章节。
 - PDF 等其他格式仅作归档；如需使用，应先转为 `.docx` 或由用户提供文本内容。
-- UI 设计图不放在本目录，按章节名放在 `inputs/<project>/ui_design/<章节名>/` 下。
+- UI 设计图不放在本目录，按章节名放在 `inputs/cpv/ui_design/<章节名>/` 下。
 - 本目录文件不会被脚本自动扫描，只有用户在对话中指定文件和章节时才读取。
 
 示例：
 
 ```text
-根据 inputs/<project>/requirements/raw_docs/<文件名>.docx 的"<章节名>"章节生成测试用例
+根据 prd_cj.docx 的"数据分析"章节生成测试用例
 ```
 
 ## 可选操作
@@ -28,7 +28,7 @@ requirements/
 不确定章节名时，可以先列出 Word 章节：
 
 ```bash
-python scripts/extract_docx.py inputs/<project>/requirements/raw_docs/<文件名>.docx --list-sections
+python scripts/extract_docx.py --project cpv inputs/cpv/requirements/raw_docs/<文件名>.docx --list-sections
 ```
 
 不确定当前有哪些可用 Word 文档时，可以先查找：
@@ -40,10 +40,10 @@ python scripts/extract_docx.py --find-docs
 需要查看章节原文时，可以直接提取指定章节：
 
 ```bash
-python scripts/extract_docx.py inputs/<project>/requirements/raw_docs/<文件名>.docx --section "<章节名>" --print
+python scripts/extract_docx.py --project cpv inputs/cpv/requirements/raw_docs/<文件名>.docx --section "<章节名>" --print
 ```
 
-提取时图片会被忽略，文字和表格尽量保留为可读文本。UI 设计图不放在需求目录，按章节名放在 `inputs/<project>/ui_design/<章节名>/` 下。
+提取时图片会被忽略，文字和表格尽量保留为可读文本。
 
 ## 归档规则
 
